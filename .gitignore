@@ -24,8 +24,8 @@ playwright-report/
 test-results/
 .playwright/
 
-# Prisma
-prisma/migrations/
+# Prisma — migrations must be committed for prisma migrate deploy to work in CI
+# migration_lock.toml and migration SQL files are tracked intentionally
 
 # Misc
 .DS_Store
