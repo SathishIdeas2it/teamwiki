@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import * as Diff from 'diff';
+import { computeDiff } from '@/lib/utils/diff';
 import type { RevisionDetail } from '@/types';
 import { DiffOutput } from '@/components/diff/DiffOutput';
 
-type DiffViewerProps = {
+export type DiffViewerProps = {
   baseRevision: RevisionDetail;
   headRevision: RevisionDetail;
 };
@@ -17,7 +17,7 @@ export function DiffViewer({ baseRevision, headRevision }: DiffViewerProps): JSX
 
   const patch = useMemo(
     () =>
-      Diff.createPatch(
+      computeDiff(
         baseRevision.title,
         baseRevision.content,
         headRevision.content,
@@ -30,9 +30,14 @@ export function DiffViewer({ baseRevision, headRevision }: DiffViewerProps): JSX
   return (
     <div data-testid="diff-viewer">
       <div className="mb-4 flex items-center justify-between">
-        <p className="text-sm text-gray-600 dark:text-gray-400">
+        <p
+          className="text-sm text-gray-600 dark:text-gray-400"
+          data-testid="diff-comparison-label"
+        >
           Comparing{' '}
-          <strong>#{baseRevision.revisionNumber}</strong> → <strong>#{headRevision.revisionNumber}</strong>
+          <strong>#{baseRevision.revisionNumber}</strong>
+          {' → '}
+          <strong>#{headRevision.revisionNumber}</strong>
         </p>
         <div className="flex rounded-md border dark:border-gray-700">
           {(['unified', 'split'] as DiffMode[]).map((m) => (
