@@ -1,0 +1,194 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enumerations ──────────────────────────────────────────────────────────────
+
+enum Role {
+  VIEWER
+  EDITOR
+  ADMIN
+  SYSTEM
+}
+
+enum ArticleStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AuditEventType {
+  ARTICLE_CREATED
+  ARTICLE_UPDATED
+  ARTICLE_DELETED
+  MCP_IMPORT_SUCCESS
+  MCP_IMPORT_FAILURE
+  USER_ROLE_CHANGED
+  USER_DEACTIVATED
+}
+
+// ─── Auth Models (NextAuth / Auth.js v5) ───────────────────────────────────────
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String   @unique @db.VarChar(254)
+  name         String   @db.VarChar(100)
+  passwordHash String?  @map("password_hash")
+  role         Role     @default(VIEWER)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  accounts    Account[]
+  sessions    Session[]
+  articles    Article[]
+  revisions   ArticleRevision[]
+  actorAudits AuditLog[]        @relation("AuditActor")
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String  @map("user_id") @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refreshToken      String? @map("refresh_token") @db.Text
+  accessToken       String? @map("access_token") @db.Text
+  expiresAt         BigInt? @map("expires_at")
+  tokenType         String? @map("token_type")
+  scope             String?
+  idToken           String? @map("id_token") @db.Text
+  sessionState      String? @map("session_state")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime @db.Timestamptz(6)
+
+  @@id([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Domain Models ─────────────────────────────────────────────────────────────
+
+model Category {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique @db.VarChar(100)
+  slug        String   @unique @db.VarChar(100)
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tags Tag[]
+
+  @@map("categories")
+}
+
+model Tag {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String    @unique @db.VarChar(50)
+  slug       String    @unique @db.VarChar(50)
+  categoryId String?   @map("category_id") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  category Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  articles ArticleTag[]
+
+  @@index([categoryId])
+  @@map("tags")
+}
+
+model Article {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug        String        @unique @db.VarChar(255)
+  title       String        @db.VarChar(500)
+  content     String        @db.Text
+  status      ArticleStatus @default(DRAFT)
+  authorId    String        @map("author_id") @db.Uuid
+  publishedAt DateTime?     @map("published_at") @db.Timestamptz(6)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // search_vector is managed entirely by a PostgreSQL trigger.
+  // Prisma never writes to this column — all FTS queries use raw SQL in src/lib/db/search.ts
+  searchVector Unsupported("tsvector")? @map("search_vector")
+
+  author    User              @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  tags      ArticleTag[]
+  revisions ArticleRevision[]
+
+  @@index([authorId])
+  @@index([status])
+  @@index([publishedAt(sort: Desc)])
+  @@map("articles")
+}
+
+model ArticleTag {
+  articleId String @map("article_id") @db.Uuid
+  tagId     String @map("tag_id") @db.Uuid
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, tagId])
+  @@map("article_tags")
+}
+
+model ArticleRevision {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  articleId      String   @map("article_id") @db.Uuid
+  revisionNumber Int      @map("revision_number")
+  title          String   @db.VarChar(500)
+  content        String   @db.Text
+  authorId       String   @map("author_id") @db.Uuid
+  changeSummary  String?  @map("change_summary") @db.Text
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  author  User    @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@unique([articleId, revisionNumber])
+  @@index([articleId, revisionNumber(sort: Desc)])
+  @@map("article_revisions")
+}
+
+model AuditLog {
+  id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventType  AuditEventType @map("event_type")
+  actorId    String?        @map("actor_id") @db.Uuid
+  targetId   String?        @map("target_id") @db.Uuid
+  targetType String?        @map("target_type") @db.VarChar(50)
+  metadata   Json?
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

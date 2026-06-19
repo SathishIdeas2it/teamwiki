@@ -1,0 +1,61 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '3000:3000'
+    environment:
+      DATABASE_URL: postgresql://teamwiki:teamwiki_password@db:5432/teamwiki
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      IMPORT_DIR: /data/imports
+      IMPORT_POLL_INTERVAL_MS: ${IMPORT_POLL_INTERVAL_MS:-60000}
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - import_data:/data/imports
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: teamwiki
+      POSTGRES_USER: teamwiki
+      POSTGRES_PASSWORD: teamwiki_password
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U teamwiki -d teamwiki']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  db_test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: teamwiki_test
+      POSTGRES_USER: teamwiki
+      POSTGRES_PASSWORD: teamwiki_password
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U teamwiki -d teamwiki_test']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - test
+
+volumes:
+  postgres_data:
+  postgres_test_data:
+  import_data:

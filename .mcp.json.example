@@ -1,0 +1,5 @@
+{
+  "filesystem": {
+    "rootDir": "/path/to/your/import/directory"
+  }
+}
