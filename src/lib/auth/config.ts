@@ -1,8 +1,8 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { PrismaAdapter } from '@auth/prisma-adapter';
-import bcryptjs from 'bcryptjs';
 import { db } from '@/lib/db/client';
+import { verifyCredentials } from '@/lib/auth/credentials';
 import type { AppSession } from '@/types';
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -19,35 +19,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
       },
-      async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
-
-        const user = await db.user.findUnique({
-          where: { email: credentials.email as string },
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            isActive: true,
-            passwordHash: true,
-          },
-        });
-
-        if (!user || !user.isActive || !user.passwordHash) return null;
-
-        const isValid = await bcryptjs.compare(
-          credentials.password as string,
-          user.passwordHash,
-        );
-        if (!isValid) return null;
-
-        return { id: user.id, email: user.email, name: user.name, role: user.role };
+      async authorize(credentials): Promise<{ id: string; email: string; name: string; role: string } | null> {
+        const email = credentials?.email;
+        const password = credentials?.password;
+        if (typeof email !== 'string' || typeof password !== 'string') return null;
+        return verifyCredentials(email, password);
       },
     }),
   ],
   callbacks: {
-    async session({ session, user }) {
+    async session({ session, user }): Promise<typeof session> {
+      // Re-read from DB on every session access so role changes take immediate effect
+      // and deactivated users are denied without waiting for session expiry.
       const dbUser = await db.user.findUnique({
         where: { id: user.id },
         select: { id: true, role: true, isActive: true },

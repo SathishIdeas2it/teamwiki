@@ -1,5 +1,6 @@
 import type { Role } from '@prisma/client';
 import type { AppSession } from '@/types';
+import { ForbiddenError } from '@/lib/errors';
 
 export type Permission =
   | 'article:read'
@@ -42,7 +43,7 @@ export function canEditArticle(
 
 export function requirePermission(session: AppSession, permission: Permission): void {
   if (!hasPermission(session.user.role, permission)) {
-    throw new Error(`Permission denied: ${permission}`);
+    throw new ForbiddenError(`You do not have permission: ${permission}`);
   }
 }
 
