@@ -50,7 +50,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         expires: session.expires,
       };
 
-      return appSession as typeof session;
+      return appSession as unknown as typeof session;
     },
   },
 });

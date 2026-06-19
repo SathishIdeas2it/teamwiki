@@ -23,17 +23,18 @@ const REDACTED_PATHS = [
   '*.idToken',
 ];
 
-export const logger = pino({
+const baseOptions = {
   level: process.env['LOG_LEVEL'] ?? 'info',
   redact: {
     paths: REDACTED_PATHS,
     censor: '[REDACTED]',
   },
   formatters: {
-    level: (label) => ({ level: label }),
+    level: (label: string) => ({ level: label }),
   },
-  transport:
-    process.env['NODE_ENV'] !== 'production'
-      ? { target: 'pino-pretty', options: { colorize: true } }
-      : undefined,
-});
+};
+
+export const logger =
+  process.env['NODE_ENV'] !== 'production'
+    ? pino({ ...baseOptions, transport: { target: 'pino-pretty', options: { colorize: true } } })
+    : pino(baseOptions);
