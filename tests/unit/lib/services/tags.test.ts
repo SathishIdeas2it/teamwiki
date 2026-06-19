@@ -161,7 +161,7 @@ describe('updateTag', () => {
     expect(result.category).toBeNull();
     expect(prismaMock.tag.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ categoryId: null }),
+        data: expect.objectContaining({ category: { disconnect: true } }),
       }),
     );
   });

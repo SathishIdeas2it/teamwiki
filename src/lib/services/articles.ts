@@ -1,10 +1,11 @@
-import { ArticleStatus, Role } from '@prisma/client';
+import { ArticleStatus, AuditEventType, Role } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db/client';
 import { canEditArticle, requirePermission } from '@/lib/auth/permissions';
 import { ForbiddenError, NotFoundError } from '@/lib/errors';
 import { slugify, slugifyWithSuffix } from '@/lib/utils/slugify';
 import { createSnapshot } from '@/lib/services/revisions';
+import { logEvent } from '@/lib/services/audit';
 import type { AppSession, ArticleSummary, ArticleWithDetails, PaginatedResult } from '@/types';
 import type { CreateArticleInput, UpdateArticleInput, ArticleListQuery } from '@/lib/validations/article';
 
@@ -213,7 +214,17 @@ export async function createArticle(
     return created;
   });
 
-  return toArticleWithDetails(article as unknown as DetailRaw);
+  const result = toArticleWithDetails(article as unknown as DetailRaw);
+
+  await logEvent({
+    eventType: AuditEventType.ARTICLE_CREATED,
+    actorId: session.user.id,
+    targetId: result.id,
+    targetType: 'article',
+    metadata: { slug: result.slug, title: result.title },
+  });
+
+  return result;
 }
 
 export async function updateArticle(
@@ -268,7 +279,17 @@ export async function updateArticle(
     return updated;
   });
 
-  return toArticleWithDetails(article as unknown as DetailRaw);
+  const result = toArticleWithDetails(article as unknown as DetailRaw);
+
+  await logEvent({
+    eventType: AuditEventType.ARTICLE_UPDATED,
+    actorId: session.user.id,
+    targetId: result.id,
+    targetType: 'article',
+    metadata: { slug: result.slug },
+  });
+
+  return result;
 }
 
 export async function deleteArticle(slug: string, session: AppSession): Promise<void> {
@@ -284,6 +305,14 @@ export async function deleteArticle(slug: string, session: AppSession): Promise<
   await db.article.update({
     where: { id: article.id },
     data: { deletedAt: new Date() },
+  });
+
+  await logEvent({
+    eventType: AuditEventType.ARTICLE_DELETED,
+    actorId: session.user.id,
+    targetId: article.id,
+    targetType: 'article',
+    metadata: { slug },
   });
 }
 

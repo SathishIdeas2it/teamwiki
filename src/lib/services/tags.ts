@@ -134,7 +134,9 @@ export async function updateTag(
   const updateData: Prisma.TagUpdateInput = {};
   if (data.name !== undefined) updateData.name = data.name;
   if ('categoryId' in data) {
-    updateData.categoryId = data.categoryId ?? null;
+    updateData.category = data.categoryId
+      ? { connect: { id: data.categoryId } }
+      : { disconnect: true };
   }
 
   const tag = await db.tag.update({
