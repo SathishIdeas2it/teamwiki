@@ -1,5 +1,9 @@
-import { resetDatabase } from '@/tests/integration/helpers/db';
+import { prisma, resetDatabase } from './helpers/db';
 
 beforeEach(async () => {
   await resetDatabase();
+});
+
+afterAll(async () => {
+  await prisma.$disconnect();
 });

@@ -1,6 +1,4 @@
-import { PrismaClient } from '@prisma/client';
-
 export default async function globalTeardown(): Promise<void> {
-  const prisma = new PrismaClient();
-  await prisma.$disconnect();
+  // Per-suite disconnection is handled in setup.ts afterAll.
+  // This hook exists for future global resource cleanup.
 }

@@ -36,6 +36,7 @@ export async function fullTextSearch(
          websearch_to_tsquery('english', ${query}) AS q
     WHERE a.search_vector @@ q
       AND a.status = 'PUBLISHED'
+      AND a.deleted_at IS NULL
       AND (
         ${tagSlugs.length === 0}
         OR EXISTS (
@@ -71,6 +72,7 @@ export async function countSearchResults(
          websearch_to_tsquery('english', ${query}) AS q
     WHERE a.search_vector @@ q
       AND a.status = 'PUBLISHED'
+      AND a.deleted_at IS NULL
       AND (
         ${tagSlugs.length === 0}
         OR EXISTS (

@@ -8,7 +8,7 @@ const config: Config = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
-  setupFilesAfterFramework: ['<rootDir>/tests/unit/setup.ts'],
+  setupFilesAfterEnv: ['<rootDir>/tests/unit/setup.ts'],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }],
   },
@@ -19,7 +19,7 @@ const config: Config = {
     '!src/**/*.d.ts',
     '!src/types/**',
   ],
-  coverageThresholds: {
+  coverageThreshold: {
     global: {
       statements: 90,
       branches: 90,

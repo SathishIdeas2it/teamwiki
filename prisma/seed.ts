@@ -4,9 +4,10 @@ import bcryptjs from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main(): Promise<void> {
-  console.log('Seeding database...');
+  console.log('Seeding database…');
 
-  // ─── System User ────────────────────────────────────────────────────────────
+  // ─── System User ─────────────────────────────────────────────────────────────
+  // The SYSTEM account is used by the MCP import pipeline. It has no password.
   const systemUser = await prisma.user.upsert({
     where: { email: 'system@teamwiki.internal' },
     update: {},
@@ -18,8 +19,8 @@ async function main(): Promise<void> {
     },
   });
 
-  // ─── Admin User ─────────────────────────────────────────────────────────────
-  const adminPassword = await bcryptjs.hash('Admin@TeamWiki1', 12);
+  // ─── Human Users ─────────────────────────────────────────────────────────────
+  const adminHash = await bcryptjs.hash('Admin@TeamWiki1', 12);
   const adminUser = await prisma.user.upsert({
     where: { email: 'admin@teamwiki.internal' },
     update: {},
@@ -27,13 +28,12 @@ async function main(): Promise<void> {
       email: 'admin@teamwiki.internal',
       name: 'Admin User',
       role: Role.ADMIN,
-      passwordHash: adminPassword,
+      passwordHash: adminHash,
       isActive: true,
     },
   });
 
-  // ─── Editor User ─────────────────────────────────────────────────────────────
-  const editorPassword = await bcryptjs.hash('Editor@TeamWiki1', 12);
+  const editorHash = await bcryptjs.hash('Editor@TeamWiki1', 12);
   const editorUser = await prisma.user.upsert({
     where: { email: 'editor@teamwiki.internal' },
     update: {},
@@ -41,13 +41,12 @@ async function main(): Promise<void> {
       email: 'editor@teamwiki.internal',
       name: 'Editor User',
       role: Role.EDITOR,
-      passwordHash: editorPassword,
+      passwordHash: editorHash,
       isActive: true,
     },
   });
 
-  // ─── Viewer User ─────────────────────────────────────────────────────────────
-  const viewerPassword = await bcryptjs.hash('Viewer@TeamWiki1', 12);
+  const viewerHash = await bcryptjs.hash('Viewer@TeamWiki1', 12);
   await prisma.user.upsert({
     where: { email: 'viewer@teamwiki.internal' },
     update: {},
@@ -55,59 +54,56 @@ async function main(): Promise<void> {
       email: 'viewer@teamwiki.internal',
       name: 'Viewer User',
       role: Role.VIEWER,
-      passwordHash: viewerPassword,
+      passwordHash: viewerHash,
       isActive: true,
     },
   });
 
   // ─── Categories ──────────────────────────────────────────────────────────────
-  const engineeringCategory = await prisma.category.upsert({
+  const engineeringCat = await prisma.category.upsert({
     where: { slug: 'engineering' },
     update: {},
-    create: {
-      name: 'Engineering',
-      slug: 'engineering',
-      description: 'Software engineering topics',
-    },
+    create: { name: 'Engineering', slug: 'engineering', description: 'Software engineering topics' },
   });
 
-  const processCategory = await prisma.category.upsert({
+  const processCat = await prisma.category.upsert({
     where: { slug: 'process' },
     update: {},
-    create: {
-      name: 'Process',
-      slug: 'process',
-      description: 'Team processes and procedures',
-    },
+    create: { name: 'Process', slug: 'process', description: 'Team processes and procedures' },
   });
 
   // ─── Tags ────────────────────────────────────────────────────────────────────
   const backendTag = await prisma.tag.upsert({
     where: { slug: 'backend' },
     update: {},
-    create: { name: 'Backend', slug: 'backend', categoryId: engineeringCategory.id },
+    create: { name: 'Backend', slug: 'backend', categoryId: engineeringCat.id },
   });
 
   const frontendTag = await prisma.tag.upsert({
     where: { slug: 'frontend' },
     update: {},
-    create: { name: 'Frontend', slug: 'frontend', categoryId: engineeringCategory.id },
+    create: { name: 'Frontend', slug: 'frontend', categoryId: engineeringCat.id },
   });
 
   await prisma.tag.upsert({
     where: { slug: 'onboarding' },
     update: {},
-    create: { name: 'Onboarding', slug: 'onboarding', categoryId: processCategory.id },
+    create: { name: 'Onboarding', slug: 'onboarding', categoryId: processCat.id },
   });
 
-  // ─── Articles with Revisions ─────────────────────────────────────────────────
+  // ─── Articles + Revision snapshots ───────────────────────────────────────────
+  // Each article create is paired with revision #1 inside a transaction so the
+  // pair is always consistent and idempotent across re-seeds.
+
   const article1 = await prisma.article.upsert({
     where: { slug: 'getting-started' },
     update: {},
     create: {
       slug: 'getting-started',
       title: 'Getting Started with TeamWiki',
-      content: '# Getting Started\n\nWelcome to TeamWiki! This guide will help you get up and running.',
+      content:
+        '# Getting Started\n\nWelcome to TeamWiki! This guide will help you get up and running quickly.\n\n' +
+        '## Creating Your First Article\n\nClick the **New Article** button in the sidebar to begin.',
       status: ArticleStatus.PUBLISHED,
       authorId: adminUser.id,
       publishedAt: new Date(),
@@ -133,13 +129,14 @@ async function main(): Promise<void> {
     create: {
       slug: 'api-design-guidelines',
       title: 'API Design Guidelines',
-      content: '# API Design Guidelines\n\nFollow these guidelines when designing REST APIs.',
+      content:
+        '# API Design Guidelines\n\nFollow these guidelines when designing REST APIs for TeamWiki.\n\n' +
+        '## Versioning\n\nAll APIs are versioned via the URL path (`/api/v1/...`).\n\n' +
+        '## Error Format\n\nAll errors return `{ error: { code, message } }`.',
       status: ArticleStatus.PUBLISHED,
       authorId: editorUser.id,
       publishedAt: new Date(),
-      tags: {
-        create: [{ tagId: backendTag.id }],
-      },
+      tags: { create: [{ tagId: backendTag.id }] },
     },
   });
 
@@ -162,12 +159,12 @@ async function main(): Promise<void> {
     create: {
       slug: 'frontend-conventions',
       title: 'Frontend Conventions',
-      content: '# Frontend Conventions\n\nOur React and TypeScript coding conventions.',
+      content:
+        '# Frontend Conventions\n\nOur React and TypeScript coding conventions for TeamWiki.\n\n' +
+        '## Component Naming\n\nAll components use PascalCase. Files are named after the component.',
       status: ArticleStatus.DRAFT,
       authorId: editorUser.id,
-      tags: {
-        create: [{ tagId: frontendTag.id }],
-      },
+      tags: { create: [{ tagId: frontendTag.id }] },
     },
   });
 
@@ -185,9 +182,10 @@ async function main(): Promise<void> {
   });
 
   console.log('Seed complete.');
-  console.log(`  System user: ${systemUser.email}`);
-  console.log(`  Admin:       ${adminUser.email}  / Admin@TeamWiki1`);
-  console.log(`  Editor:      ${editorUser.email} / Editor@TeamWiki1`);
+  console.log(`  system : ${systemUser.email}`);
+  console.log(`  admin  : ${adminUser.email}   / Admin@TeamWiki1`);
+  console.log(`  editor : ${editorUser.email}  / Editor@TeamWiki1`);
+  console.log(`  viewer : viewer@teamwiki.internal / Viewer@TeamWiki1`);
 }
 
 main()

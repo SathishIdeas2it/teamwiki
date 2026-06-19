@@ -10,7 +10,7 @@ const config: Config = {
   },
   globalSetup: '<rootDir>/tests/integration/globalSetup.ts',
   globalTeardown: '<rootDir>/tests/integration/globalTeardown.ts',
-  setupFilesAfterFramework: ['<rootDir>/tests/integration/setup.ts'],
+  setupFilesAfterEnv: ['<rootDir>/tests/integration/setup.ts'],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {}],
   },

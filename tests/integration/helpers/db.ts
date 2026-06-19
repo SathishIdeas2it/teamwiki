@@ -1,6 +1,13 @@
 import { PrismaClient, Role } from '@prisma/client';
 
-const prisma = new PrismaClient();
+const testDatabaseUrl = process.env['DATABASE_URL_TEST'];
+if (!testDatabaseUrl) {
+  throw new Error('DATABASE_URL_TEST must be set to run integration tests');
+}
+
+export const prisma = new PrismaClient({
+  datasources: { db: { url: testDatabaseUrl } },
+});
 
 export async function resetDatabase(): Promise<void> {
   await prisma.$transaction([
@@ -25,9 +32,9 @@ export async function createTestUser(
     passwordHash: string;
   }> = {},
 ): Promise<{ id: string; email: string; name: string; role: Role }> {
-  const user = await prisma.user.create({
+  return prisma.user.create({
     data: {
-      email: overrides.email ?? `test-${Date.now()}@example.com`,
+      email: overrides.email ?? `test-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`,
       name: overrides.name ?? 'Test User',
       role: overrides.role ?? Role.VIEWER,
       isActive: overrides.isActive ?? true,
@@ -35,7 +42,4 @@ export async function createTestUser(
     },
     select: { id: true, email: true, name: true, role: true },
   });
-  return user;
 }
-
-export { prisma };
