@@ -1,69 +1,88 @@
-name: E2E Tests
+name: E2E — Preview
 
+# This workflow runs Playwright tests against a Vercel/Netlify preview deployment URL.
+# Full E2E coverage on main and release tags is handled by the CI/CD pipeline (ci.yml).
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
+    # Only trigger when code that could affect E2E behaviour changes
+    paths:
+      - 'src/**'
+      - 'tests/e2e/**'
+      - 'prisma/**'
+      - 'playwright.config.ts'
+      - 'package-lock.json'
+
+concurrency:
+  group: e2e-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  e2e:
-    name: Playwright E2E
+  e2e-preview:
+    name: Playwright — Preview
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+
+    # Skip if the PR comes from Dependabot (no secrets available)
+    if: github.actor != 'dependabot[bot]'
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16-alpine
         env:
-          POSTGRES_DB: teamwiki_test
+          POSTGRES_DB: teamwiki_e2e_preview
           POSTGRES_USER: teamwiki
           POSTGRES_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U teamwiki -d teamwiki_e2e_preview"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     env:
-      DATABASE_URL_TEST: postgresql://teamwiki:${{ secrets.TEST_DB_PASSWORD }}@localhost:5432/teamwiki_test
+      DATABASE_URL_TEST: >-
+        postgresql://teamwiki:${{ secrets.TEST_DB_PASSWORD }}@localhost:5432/teamwiki_e2e_preview
       NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
       NEXTAUTH_URL: http://localhost:3000
       IMPORT_DIR: /tmp/teamwiki-imports
       IMPORT_POLL_INTERVAL_MS: '60000'
+      SYSTEM_USER_ID: '00000000-0000-0000-0000-000000000001'
       NODE_ENV: test
       LOG_LEVEL: error
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright browsers
+      - name: Install Playwright + Chromium
         run: npx playwright install --with-deps chromium
+
+      - name: Create import directories
+        run: mkdir -p /tmp/teamwiki-imports/failed
 
       - name: Generate Prisma client
         run: npx prisma generate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
 
-      - name: Create import directory
-        run: mkdir -p /tmp/teamwiki-imports/failed
-
-      - name: Migrate test DB
+      - name: Run migrations
         run: npx prisma migrate deploy
         env:
           DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
 
-      - name: Seed test DB
+      - name: Seed database
         run: npm run db:seed
         env:
           DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
@@ -74,9 +93,9 @@ jobs:
           DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
 
       - name: Upload Playwright report
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-preview-${{ github.run_number }}
           path: playwright-report/
           retention-days: 7

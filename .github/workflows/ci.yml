@@ -1,20 +1,148 @@
-name: CI
+name: CI/CD
 
+# ─── Triggers ──────────────────────────────────────────────────────────────────
 on:
   push:
     branches: ['**']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
+# Cancel in-progress runs for the same ref on new pushes (preserve main/tag runs)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+# Minimum permissions — jobs that need more declare them explicitly
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 1 — LINT
+# ESLint + Prettier. Runs in parallel with Type Check.
+# ══════════════════════════════════════════════════════════════════════════════
 jobs:
-  ci:
-    name: Lint, Type-check, Test, Build
+  lint:
+    name: '1 · Lint'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npx eslint src tests --max-warnings 0
+
+      - name: Prettier
+        run: npx prettier --check "src/**/*.{ts,tsx}" "tests/**/*.{ts,tsx}"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 2 — TYPE CHECK
+# tsc --noEmit. Runs in parallel with Lint.
+# ══════════════════════════════════════════════════════════════════════════════
+  typecheck:
+    name: '2 · Type Check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Prisma generate is required before tsc can resolve @prisma/client types
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://noop:noop@localhost:5432/noop
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 3 — UNIT TESTS
+# Jest unit suite with coverage. Gate: both Lint and Type Check must pass.
+# ══════════════════════════════════════════════════════════════════════════════
+  unit-tests:
+    name: '3 · Unit Tests'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: [lint, typecheck]
+
+    env:
+      # Dummy URL — unit tests mock the DB client; no real connection needed
+      DATABASE_URL: postgresql://noop:noop@localhost:5432/noop
+      NEXTAUTH_SECRET: ci-unit-test-secret-minimum-32-characters
+      NEXTAUTH_URL: http://localhost:3000
+      IMPORT_DIR: /tmp/teamwiki-imports
+      IMPORT_POLL_INTERVAL_MS: '60000'
+      SYSTEM_USER_ID: '00000000-0000-0000-0000-000000000001'
+      NODE_ENV: test
+      LOG_LEVEL: error
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create import directories
+        run: mkdir -p /tmp/teamwiki-imports/failed
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Run unit tests with coverage
+        run: npx jest --config jest.config.ts --coverage --ci --forceExit
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: coverage/unit/
+          retention-days: 14
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 4 — INTEGRATION TESTS
+# Jest integration suite against a real PostgreSQL 16 instance.
+# Gate: Unit Tests must pass first.
+# ══════════════════════════════════════════════════════════════════════════════
+  integration-tests:
+    name: '4 · Integration Tests'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: unit-tests
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16-alpine
         env:
           POSTGRES_DB: teamwiki_test
           POSTGRES_USER: teamwiki
@@ -22,67 +150,589 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U teamwiki -d teamwiki_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      DATABASE_URL_TEST: postgresql://teamwiki:${{ secrets.TEST_DB_PASSWORD }}@localhost:5432/teamwiki_test
-      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+      DATABASE_URL_TEST: >-
+        postgresql://teamwiki:${{ secrets.TEST_DB_PASSWORD }}@localhost:5432/teamwiki_test
+      NEXTAUTH_SECRET: ci-integration-test-secret-minimum-32-chars
       NEXTAUTH_URL: http://localhost:3000
       IMPORT_DIR: /tmp/teamwiki-imports
       IMPORT_POLL_INTERVAL_MS: '60000'
+      SYSTEM_USER_ID: '00000000-0000-0000-0000-000000000001'
       NODE_ENV: test
       LOG_LEVEL: error
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Type-check
-        run: npx tsc --noEmit
-
-      - name: Lint
-        run: npx eslint src tests --max-warnings 0
-
-      - name: Format check
-        run: npx prettier --check "src/**/*.{ts,tsx}" "tests/**/*.{ts,tsx}"
-
-      - name: Audit dependencies
-        run: npm audit --audit-level=high
+      - name: Create import directories
+        run: mkdir -p /tmp/teamwiki-imports/failed
 
       - name: Generate Prisma client
         run: npx prisma generate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
 
-      - name: Create import directory
-        run: mkdir -p /tmp/teamwiki-imports/failed
-
-      - name: Run migrations (test DB)
+      - name: Run database migrations
         run: npx prisma migrate deploy
         env:
           DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
 
-      - name: Unit tests
-        run: npx jest --config jest.config.ts --coverage --ci
-
-      - name: Integration tests
-        run: npx jest --config jest.integration.config.ts --ci
-
-      - name: Build
-        run: npm run build
+      - name: Run integration tests
+        run: npx jest --config jest.integration.config.ts --ci --forceExit
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
-          NEXTAUTH_URL: http://localhost:3000
-          IMPORT_DIR: /tmp/teamwiki-imports
+          DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 6 — COVERAGE VALIDATION
+# Validates unit coverage >= 80% and posts a formatted table on PRs.
+# Runs in parallel with Integration Tests (both depend only on Unit Tests).
+# (Stage 5 — E2E — requires the Build artifact; see job "e2e-tests" below.)
+# ══════════════════════════════════════════════════════════════════════════════
+  coverage-validation:
+    name: '6 · Coverage Validation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: unit-tests
+
+    permissions:
+      contents: read
+      pull-requests: write   # allows posting / updating coverage comments
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-unit
+          path: coverage/unit/
+
+      - name: Validate coverage thresholds and post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            const summaryPath = path.join('coverage', 'unit', 'coverage-summary.json');
+            if (!fs.existsSync(summaryPath)) {
+              core.setFailed('coverage-summary.json not found — was jest run with --coverage?');
+              return;
+            }
+
+            const summary   = JSON.parse(fs.readFileSync(summaryPath, 'utf-8'));
+            const totals    = summary.total;
+            const THRESHOLD = 80;
+
+            const order   = ['lines', 'statements', 'functions', 'branches'];
+            let   anyFail = false;
+            const tableRows = order.map(key => {
+              const { total, covered, pct } = totals[key];
+              const pass = pct >= THRESHOLD;
+              if (!pass) anyFail = true;
+              const icon = pass ? '✅' : '❌';
+              return `| ${icon} | \`${key}\` | ${covered} / ${total} | **${pct.toFixed(1)}%** |`;
+            });
+
+            const lowestPct = Math.min(...order.map(k => totals[k].pct));
+            const statusLine = anyFail
+              ? `⚠️ Coverage **${lowestPct.toFixed(1)}%** is below the **${THRESHOLD}%** threshold.`
+              : `✅ All metrics pass the **${THRESHOLD}%** threshold (lowest: **${lowestPct.toFixed(1)}%**).`;
+
+            const body = [
+              '## 📊 Coverage Report',
+              '',
+              statusLine,
+              '',
+              '| | Metric | Covered | % |',
+              '|---|---|---|---|',
+              ...tableRows,
+              '',
+              `<sub>Commit: \`${{ github.sha }}\` · Branch: \`${{ github.ref_name }}\`</sub>`,
+            ].join('\n');
+
+            // Post / update a sticky comment on PRs
+            if (context.eventName === 'pull_request') {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                issue_number: context.issue.number,
+              });
+              const existing = comments.find(c => c.body.startsWith('## 📊 Coverage Report'));
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner:      context.repo.owner,
+                  repo:       context.repo.repo,
+                  comment_id: existing.id,
+                  body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner:        context.repo.owner,
+                  repo:         context.repo.repo,
+                  issue_number: context.issue.number,
+                  body,
+                });
+              }
+            }
+
+            // Log to Actions summary
+            await core.summary
+              .addHeading('Coverage Report')
+              .addRaw(body)
+              .write();
+
+            if (anyFail) {
+              core.setFailed(
+                `Coverage below ${THRESHOLD}% threshold. Lowest metric: ${lowestPct.toFixed(1)}%`
+              );
+            }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 7 — SECURITY SCAN
+# npm audit for known CVEs + CodeQL static analysis for JS/TS.
+# Runs in parallel with Unit Tests (depends only on Lint + Type Check).
+# Build is blocked until this passes.
+# ══════════════════════════════════════════════════════════════════════════════
+  security-scan:
+    name: '7 · Security Scan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [lint, typecheck]
+
+    permissions:
+      contents:        read
+      security-events: write  # required for CodeQL SARIF upload
+      actions:         read   # required for CodeQL to read workflow info
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Dependency vulnerability audit ──────────────────────────────────────
+      # Fails on HIGH or CRITICAL findings (build is blocked).
+      - name: npm audit
+        run: npm audit --audit-level=high
+
+      # ── CodeQL static analysis ─────────────────────────────────────────────
+      # Scans for injection, XSS, path traversal, and 60+ security patterns.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+
+      - name: Autobuild (CodeQL)
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:javascript-typescript
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 8 — BUILD
+# next build. Gate: Coverage + Integration Tests + Security Scan must all pass.
+# Produces a build artifact shared with E2E and Docker stages.
+# ══════════════════════════════════════════════════════════════════════════════
+  build:
+    name: '8 · Build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [coverage-validation, integration-tests, security-scan]
+
+    env:
+      # next build executes RSC pages, but all dashboard pages call auth()
+      # which reads cookies — Next.js 15 auto-opts them into dynamic rendering,
+      # so no live DB connection is made during the build.
+      DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://noop:noop@localhost:5432/noop' }}
+      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+      NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL || 'http://localhost:3000' }}
+      IMPORT_DIR: /tmp/teamwiki-imports
+      IMPORT_POLL_INTERVAL_MS: '60000'
+      SYSTEM_USER_ID: '00000000-0000-0000-0000-000000000001'
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Build Next.js application
+        run: npm run build
+
+      # Share .next/standalone + public so E2E and Docker stages can use it
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextjs-build
+          path: |
+            .next/
+            public/
+          retention-days: 1
+          if-no-files-found: error
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 5 — E2E TESTS  (listed 5th in spec; requires Build so runs after it)
+# Playwright against a live Next.js dev server backed by a real PostgreSQL DB.
+# ══════════════════════════════════════════════════════════════════════════════
+  e2e-tests:
+    name: '5 · E2E Tests'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: build
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: teamwiki_e2e
+          POSTGRES_USER: teamwiki
+          POSTGRES_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U teamwiki -d teamwiki_e2e"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL_TEST: >-
+        postgresql://teamwiki:${{ secrets.TEST_DB_PASSWORD }}@localhost:5432/teamwiki_e2e
+      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+      NEXTAUTH_URL: http://localhost:3000
+      IMPORT_DIR: /tmp/teamwiki-imports
+      IMPORT_POLL_INTERVAL_MS: '60000'
+      SYSTEM_USER_ID: '00000000-0000-0000-0000-000000000001'
+      NODE_ENV: test
+      LOG_LEVEL: error
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright + Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Create import directories
+        run: mkdir -p /tmp/teamwiki-imports/failed
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
+
+      - name: Seed E2E database
+        run: npm run db:seed
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
+
+      - name: Run Playwright tests
+        run: npx playwright test
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL_TEST }}
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload test traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 9 — DOCKER BUILD & PUSH
+# Multi-stage Docker build → GHCR → Trivy vulnerability scan.
+# Runs in parallel with E2E (both depend on Build).
+# Only executes on main branch pushes and semver tags.
+# ══════════════════════════════════════════════════════════════════════════════
+  docker-build:
+    name: '9 · Docker Build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents:        read
+      packages:        write  # push to GHCR
+      security-events: write  # upload Trivy SARIF
+
+    outputs:
+      image-ref: ${{ steps.meta.outputs.tags }}
+      digest:    ${{ steps.push.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Enable BuildKit layer caching
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Generate OCI-compliant image tags and labels
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=TeamWiki
+            org.opencontainers.image.description=Internal knowledge base
+
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags:      ${{ steps.meta.outputs.tags }}
+          labels:    ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+          # Placeholder secrets let prisma generate + next build succeed without
+          # real credentials baked into any image layer.
+          build-args: |
+            DATABASE_URL=postgresql://noop:noop@localhost:5432/noop
+            NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL || 'http://localhost:3000' }}
+
+      # ── Container vulnerability scan ───────────────────────────────────────
+      # Fails the job on HIGH or CRITICAL CVEs in the final image.
+      # Results are uploaded to the Security tab as SARIF.
+      - name: Scan image with Trivy
+        id: trivy
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          format:    sarif
+          output:    trivy-results.sarif
+          severity:  HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category:   trivy-container
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 10a — DEPLOY: STAGING
+# Automatic on every push to main after E2E + Docker both pass.
+# Requires the "staging" GitHub environment to be configured.
+# ══════════════════════════════════════════════════════════════════════════════
+  deploy-staging:
+    name: '10 · Deploy — Staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [e2e-tests, docker-build]
+    if: github.ref == 'refs/heads/main'
+
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL }}
+
+    permissions:
+      contents:    read
+      deployments: write
+
+    steps:
+      - name: Deploy to staging via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host:     ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key:      ${{ secrets.STAGING_SSH_KEY }}
+          port:     ${{ secrets.STAGING_PORT || 22 }}
+          envs:     REGISTRY,IMAGE_NAME
+          script: |
+            set -euo pipefail
+            IMAGE="${REGISTRY}/${IMAGE_NAME}:sha-$(echo '${{ github.sha }}' | cut -c1-7)"
+
+            echo "Pulling $IMAGE ..."
+            docker pull "$IMAGE"
+
+            echo "Replacing container ..."
+            docker stop  teamwiki-staging 2>/dev/null || true
+            docker rm    teamwiki-staging 2>/dev/null || true
+
+            docker run -d \
+              --name    teamwiki-staging \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              -e DATABASE_URL="${{ secrets.STAGING_DATABASE_URL }}" \
+              -e NEXTAUTH_SECRET="${{ secrets.NEXTAUTH_SECRET }}" \
+              -e NEXTAUTH_URL="${{ vars.STAGING_URL }}" \
+              -e IMPORT_DIR=/app/imports \
+              -e IMPORT_POLL_INTERVAL_MS=60000 \
+              -e SYSTEM_USER_ID="${{ secrets.SYSTEM_USER_ID }}" \
+              -e NODE_ENV=production \
+              -e LOG_LEVEL=info \
+              -v teamwiki-staging-imports:/app/imports \
+              "$IMAGE"
+
+            # Run pending DB migrations inside the new container
+            docker exec teamwiki-staging \
+              npx prisma migrate deploy \
+              --schema=/app/prisma/schema.prisma \
+            || true
+
+            # Prune stale images for this repository
+            docker image prune -f \
+              --filter "label=org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}"
+
+      - name: Verify staging health
+        run: |
+          echo "Waiting for container to initialise..."
+          sleep 15
+          STATUS=$(curl -fsSL -o /dev/null -w "%{http_code}" "${{ vars.STAGING_URL }}/api/health")
+          echo "Health check status: $STATUS"
+          [ "$STATUS" -eq 200 ] || (echo "Health check failed ($STATUS)" && exit 1)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 10b — DEPLOY: PRODUCTION
+# Triggered only by semver tags (e.g. v1.2.3).
+# Requires the "production" GitHub environment with at least one required reviewer.
+# ══════════════════════════════════════════════════════════════════════════════
+  deploy-production:
+    name: '10 · Deploy — Production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: deploy-staging
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+
+    permissions:
+      contents:    read
+      deployments: write
+
+    steps:
+      - name: Deploy to production via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host:     ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key:      ${{ secrets.PRODUCTION_SSH_KEY }}
+          port:     ${{ secrets.PRODUCTION_PORT || 22 }}
+          envs:     REGISTRY,IMAGE_NAME
+          script: |
+            set -euo pipefail
+            TAG="${{ github.ref_name }}"
+            IMAGE="${REGISTRY}/${IMAGE_NAME}:${TAG}"
+
+            echo "Pulling $IMAGE ..."
+            docker pull "$IMAGE"
+
+            echo "Replacing production container ..."
+            docker stop  teamwiki-prod 2>/dev/null || true
+            docker rm    teamwiki-prod 2>/dev/null || true
+
+            docker run -d \
+              --name    teamwiki-prod \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              -e DATABASE_URL="${{ secrets.PRODUCTION_DATABASE_URL }}" \
+              -e NEXTAUTH_SECRET="${{ secrets.NEXTAUTH_SECRET }}" \
+              -e NEXTAUTH_URL="${{ vars.PRODUCTION_URL }}" \
+              -e IMPORT_DIR=/app/imports \
+              -e IMPORT_POLL_INTERVAL_MS=60000 \
+              -e SYSTEM_USER_ID="${{ secrets.SYSTEM_USER_ID }}" \
+              -e NODE_ENV=production \
+              -e LOG_LEVEL=warn \
+              -v teamwiki-prod-imports:/app/imports \
+              "$IMAGE"
+
+            docker exec teamwiki-prod \
+              npx prisma migrate deploy \
+              --schema=/app/prisma/schema.prisma \
+            || true
+
+            docker image prune -f \
+              --filter "label=org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}"
+
+      - name: Verify production health
+        run: |
+          echo "Waiting for container to initialise..."
+          sleep 20
+          STATUS=$(curl -fsSL -o /dev/null -w "%{http_code}" "${{ vars.PRODUCTION_URL }}/api/health")
+          echo "Health check status: $STATUS"
+          [ "$STATUS" -eq 200 ] || (echo "Health check failed ($STATUS)" && exit 1)
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:             ${{ github.ref_name }}
+          generate_release_notes: true
+          make_latest:          true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,13 +1,34 @@
+# Build artifacts
 node_modules
 .next
+
+# Version control
 .git
 .gitignore
-*.md
+.github
+
+# Environment & secrets
 .env
 .env.*
 !.env.example
+.mcp.json
+
+# Test & coverage outputs
+tests
 coverage
 playwright-report
 test-results
 .playwright
-prisma/migrations
+
+# Documentation
+docs
+*.md
+!README.md
+
+# Development tooling
+.vscode
+.idea
+
+# OS artifacts
+.DS_Store
+Thumbs.db
