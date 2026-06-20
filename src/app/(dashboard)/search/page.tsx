@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
+import { SearchResults } from '@/components/search/SearchResults';
 
 export const metadata: Metadata = { title: 'Search' };
 
@@ -12,9 +14,11 @@ export default async function SearchPage({ searchParams }: SearchPageProps): Pro
   return (
     <div>
       <h1 className="mb-6 text-2xl font-bold text-gray-900 dark:text-gray-100">
-        Search {q ? `— "${q}"` : ''}
+        Search{q ? ` — "${q}"` : ''}
       </h1>
-      {/* SearchResults Client Component goes here */}
+      <Suspense>
+        <SearchResults />
+      </Suspense>
     </div>
   );
 }

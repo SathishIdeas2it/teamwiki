@@ -1,22 +1,33 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 
 type ArticleActionsProps = {
   slug: string;
   canEdit: boolean;
   canDelete: boolean;
-  onDelete: () => Promise<void>;
 };
 
 export function ArticleActions({
   slug,
   canEdit,
   canDelete,
-  onDelete,
 }: ArticleActionsProps): JSX.Element | null {
+  const router = useRouter();
+  const [isDeleting, setIsDeleting] = useState(false);
+
   if (!canEdit && !canDelete) return null;
+
+  async function handleDelete(): Promise<void> {
+    if (!confirm('Delete this article? This cannot be undone.')) return;
+    setIsDeleting(true);
+    await fetch(`/api/articles/${slug}`, { method: 'DELETE' });
+    router.push('/articles');
+    router.refresh();
+  }
 
   return (
     <div className="flex items-center gap-2">
@@ -34,7 +45,10 @@ export function ArticleActions({
         <Button
           variant="danger"
           size="sm"
-          onClick={() => { void onDelete(); }}
+          isLoading={isDeleting}
+          onClick={() => {
+            void handleDelete();
+          }}
           data-testid="article-delete-button"
         >
           Delete
