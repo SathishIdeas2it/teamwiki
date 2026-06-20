@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -60,7 +60,7 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -101,7 +101,7 @@ jobs:
       LOG_LEVEL: error
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -167,7 +167,7 @@ jobs:
       LOG_LEVEL: error
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -212,7 +212,7 @@ jobs:
       pull-requests: write   # allows posting / updating coverage comments
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download coverage artifact
         uses: actions/download-artifact@v4
@@ -319,7 +319,7 @@ jobs:
       actions:         read   # required for CodeQL to read workflow info
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -375,7 +375,7 @@ jobs:
       NEXT_TELEMETRY_DISABLED: '1'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -441,7 +441,7 @@ jobs:
       LOG_LEVEL: error
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -518,7 +518,7 @@ jobs:
       digest:    ${{ steps.push.outputs.digest }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Enable BuildKit layer caching
       - uses: docker/setup-buildx-action@v3
