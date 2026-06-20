@@ -317,13 +317,14 @@ export async function deleteArticle(slug: string, session: AppSession): Promise<
 }
 
 export async function createFromImport(
-  data: { title: string; content: string },
+  data: { title: string; content: string; tagIds?: string[] },
   session: AppSession,
 ): Promise<ArticleWithDetails> {
   requirePermission(session, 'article:create');
 
   const baseSlug = slugify(data.title);
   const slug = await generateUniqueSlug(baseSlug);
+  const tagIds = data.tagIds ?? [];
 
   const article = await db.$transaction(async (tx) => {
     const created = await tx.article.create({
@@ -334,6 +335,9 @@ export async function createFromImport(
         status: ArticleStatus.DRAFT,
         authorId: session.user.id,
         publishedAt: null,
+        ...(tagIds.length > 0
+          ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } }
+          : {}),
       },
       select: ARTICLE_DETAIL_SELECT,
     });

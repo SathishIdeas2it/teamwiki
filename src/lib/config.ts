@@ -7,6 +7,7 @@ const configSchema = z.object({
   NEXTAUTH_URL: z.string().url(),
   IMPORT_DIR: z.string().min(1),
   IMPORT_POLL_INTERVAL_MS: z.coerce.number().int().min(10000).default(60000),
+  SYSTEM_USER_ID: z.string().min(1).optional(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
