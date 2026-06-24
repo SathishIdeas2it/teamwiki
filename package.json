@@ -26,7 +26,7 @@
   "dependencies": {
     "@auth/prisma-adapter": "2.8.0",
     "@modelcontextprotocol/sdk": "1.11.4",
-    "@prisma/client": "6.8.2",
+    "@prisma/client": "7.8.0",
     "@uiw/react-md-editor": "4.0.5",
     "bcryptjs": "3.0.2",
     "diff": "8.0.2",
